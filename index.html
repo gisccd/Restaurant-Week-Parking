@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Restaurant Week Parking | Center City District</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- ArcGIS Maps SDK for JavaScript -->
+<link rel="stylesheet" href="https://js.arcgis.com/4.30/esri/themes/light/main.css">
+<script src="https://js.arcgis.com/4.30/"></script>
+
+<script>
+/* =====================================================================
+   CONFIG: this is the only section you should need to edit.
+   Open the browser console (F12) on first load: the page prints every
+   layer in the web map and the fields on the restaurant and parking layers.
+   ===================================================================== */
+const CONFIG = {
+
+  title: "Restaurant Week Parking",
+  headerNote: "",               // optional HTML shown at the right of the header
+
+  center: [-75.1635, 39.9515],   // [longitude, latitude]
+  zoom: 15,
+
+  // ---- Where the data comes from ----
+  portalUrl: "https://ccdphila.maps.arcgis.com",
+  webMapId: "2e036f83cb0e4cb2909e90e88c584448",
+
+  // ---- Restaurants ----
+  restaurants: {
+    // Part of the layer's title (case doesn't matter). Leave blank to use the
+    // first layer that has the name field below.
+    layerTitle: "",
+    where: "",                   // optional SQL filter
+    fields: {
+      name:        "Restaurant_Name",
+      address:     "Restaurant_Address"
+    }
+  },
+
+  // ---- Parking ----
+  parking: {
+  layerTitle: "",
+  where: "",
+  fields: {
+    name:    "USER_Name",       // shown as the facility's heading
+    address: "USER_Address"     // shown under the heading
+  },
+  details: [
+    { field: "USER_Coupon_Link", label: "Discounted Parking" }
+  ],
+  count: 1,
+  walkingSpeedMph: 3
+},
+
+  // Whether the list scrolls smoothly and the map glides. false = jump.
+  smoothMotion: false
+};
+/* ===================================================================== */
+</script>
+
+<style>
+  :root {
+    --ink: #1c2a33;
+    --muted: #5b6b73;
+    --paper: #ffffff;
+    --mist: #f2f5f4;
+    --line: #dde3e1;
+    --field: #c9d2cf;
+    --teal: #0f9a8e;
+    --teal-ink: #0b6f66;
+    --select: #e6f4f2;
+    --here: #fff4d6;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: "Public Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    color: var(--ink);
+    background: var(--paper);
+  }
+
+  .app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+
+  .topbar {
+    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+    gap: 4px 16px; padding: 14px 20px; border-bottom: 1px solid var(--line);
+  }
+  .topbar h1 { margin: 0; font-size: 1.3rem; font-weight: 700; letter-spacing: -0.01em; }
+  .count { margin: 0; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .header-note { margin: 0 0 0 auto; font-size: 0.85rem; color: var(--muted); text-align: right; }
+  .header-note a { color: var(--teal-ink); }
+
+  .layout { display: grid; grid-template-columns: clamp(380px, 40%, 560px) 1fr; min-height: 0; }
+
+  .panel {
+    display: flex; flex-direction: column; min-height: 0; overflow-y: auto;
+    border-right: 1px solid var(--line); background: var(--paper);
+  }
+
+  /* Search */
+  .filters {
+    display: grid; gap: 10px; padding: 16px 20px;
+    background: var(--mist); border-bottom: 1px solid var(--line);
+  }
+  input {
+    width: 100%; padding: 8px 10px; font: inherit; color: var(--ink);
+    background: #fff; border: 1px solid var(--field); border-radius: 6px;
+  }
+  input:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--teal); outline-offset: 2px;
+  }
+  .filter-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .hint { margin: 0; font-size: 0.85rem; color: var(--muted); }
+  .link-btn {
+    padding: 0; font: inherit; font-weight: 600; color: var(--teal-ink); cursor: pointer;
+    background: none; border: 0; text-decoration: underline; text-underline-offset: 2px;
+  }
+
+  .sw { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .sw svg, .sw img { display: block; }
+
+  /* Restaurant list */
+  .list { flex: 1 0 auto; margin: 0; padding: 0; list-style: none; }
+  .card { border-bottom: 1px solid var(--line); }
+  .card[aria-current="true"] { background: var(--select); box-shadow: inset 3px 0 0 var(--teal); }
+
+  .card-head {
+    display: flex; width: 100%; align-items: flex-start; gap: 10px;
+    padding: 14px 20px; text-align: left; font: inherit; color: inherit;
+    background: none; border: 0; cursor: pointer;
+  }
+  .card-head:hover .ttl { text-decoration: underline; text-underline-offset: 2px; }
+  .card-head .txt { flex: 1; min-width: 0; }
+  .card .ttl { display: block; font-size: 1rem; font-weight: 600; }
+  .card .sub { display: flex; align-items: center; gap: 7px; margin-top: 2px; font-size: 0.875rem; color: var(--muted); }
+  .chev { flex: none; margin-top: 3px; color: var(--teal-ink); transition: transform .2s; }
+  .card-head[aria-expanded="true"] .chev { transform: rotate(180deg); }
+  @media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
+
+  .card-body { padding: 0 20px 18px; }
+  .r-links { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 14px; font-size: 0.9rem; }
+  .r-links a { color: var(--teal-ink); font-weight: 600; }
+
+  /* Parking results */
+  .card-body h3 { margin: 0 0 8px; font-size: 0.95rem; font-weight: 700; }
+  .parking { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .lot {
+    background: #fff; border: 1px solid var(--line); border-radius: 8px;
+  }
+  .lot.here { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal); }
+  .lot summary {
+    display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: baseline;
+    padding: 10px 12px; cursor: pointer; list-style: none;
+  }
+  .lot summary::-webkit-details-marker { display: none; }
+  .lot .p-name { display: flex; align-items: center; gap: 7px; font-weight: 600; }
+  .lot .p-dist { font-weight: 700; color: var(--teal-ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .lot .p-sub { grid-column: 1 / -1; font-size: 0.85rem; color: var(--muted); }
+  .lot-body { padding: 0 12px 12px; }
+  .lot dl {
+    display: grid; grid-template-columns: max-content 1fr; gap: 5px 16px;
+    margin: 0 0 10px; font-size: 0.875rem;
+  }
+  .lot dt { color: var(--muted); }
+  .lot dd { margin: 0; overflow-wrap: anywhere; white-space: pre-line; }
+  .lot dd a { color: var(--teal-ink); }
+  .lot-actions { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.875rem; }
+  .lot-actions a, .lot-actions button {
+    padding: 0; font: inherit; font-weight: 600; color: var(--teal-ink); cursor: pointer;
+    background: none; border: 0; text-decoration: underline; text-underline-offset: 2px;
+  }
+  .none { margin: 0; font-size: 0.9rem; color: var(--muted); }
+
+  .empty { padding: 28px 20px; color: var(--muted); }
+  .empty p { margin: 0 0 8px; }
+
+  .map { height: 100%; min-height: 0; }
+
+  @media (max-width: 820px) {
+    html, body, .app { height: auto; }
+    .layout { grid-template-columns: 1fr; }
+    .map { order: -1; height: 46vh; position: sticky; top: 0; z-index: 2; }
+    .panel { border-right: 0; overflow: visible; }
+  }
+</style>
+</head>
+
+<body>
+<div class="app">
+  <header class="topbar">
+    <h1 id="title"></h1>
+    <p class="count" id="count" aria-live="polite">Loading restaurants…</p>
+    <p class="header-note" id="headerNote" hidden></p>
+  </header>
+
+  <main class="layout">
+    <aside class="panel" id="panel">
+      <section class="filters" aria-label="Search restaurants">
+        <input id="search" type="search" placeholder="Search participating restaurants"
+               aria-label="Search participating restaurants by name or address" autocomplete="off">
+        <div class="filter-foot">
+          <p class="hint">Select a restaurant to see the closest parking.</p>
+          <button class="link-btn" id="reset" type="button">Clear</button>
+        </div>
+      </section>
+
+      <ol class="list" id="list" aria-label="Restaurants"></ol>
+    </aside>
+
+    <div class="map" id="map" role="region" aria-label="Map of restaurants and parking"></div>
+  </main>
+</div>
+
+<script>
+require([
+  "esri/config",
+  "esri/WebMap",
+  "esri/views/MapView",
+  "esri/Graphic",
+  "esri/layers/GraphicsLayer",
+  "esri/symbols/support/symbolUtils"
+], function (esriConfig, WebMap, MapView, Graphic, GraphicsLayer, symbolUtils) {
+
+  // Public page: never show a Portal sign-in window.
+  esriConfig.request.useIdentity = false;
+
+  const RC = CONFIG.restaurants;
+  const PC = CONFIG.parking;
+  const RF = RC.fields;
+  const reduceMotion = !CONFIG.smoothMotion ||
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    title: $("title"), count: $("count"), panel: $("panel"), search: $("search"),
+    reset: $("reset"), list: $("list"), note: $("headerNote")
+  };
+  if (CONFIG.title) els.title.textContent = CONFIG.title;
+  else els.title.hidden = true;
+  if (CONFIG.headerNote) { els.note.innerHTML = CONFIG.headerNote; els.note.hidden = false; }
+
+  /* ---------- helpers ---------- */
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const str = (v) => (v == null ? "" : String(v).trim());
+  const low = (v) => str(v).toLowerCase().replace(/\s+/g, " ");
+  const norm = (v) => low(v).replace(/&/g, " and ").replace(/['’`.]/g, "")
+    .replace(/[^a-z0-9]+/g, " ").trim();
+  const get = (attrs, field) => (field ? attrs[field] : undefined);
+  const telHref = (p) => "tel:" + p.replace(/[^\d+]/g, "");
+  const linkText = (u) => u.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
+  const websiteUrl = (u) => (!u ? "" : /^https?:\/\//i.test(u) ? u : "https://" + u);
+
+  // Straight-line distance in meters between two points (any spatial reference
+  // the SDK can express as latitude/longitude, e.g. Web Mercator or WGS84).
+  function distanceMeters(a, b) {
+    const R = 6371008.8, rad = Math.PI / 180;
+    const dLat = (b.latitude - a.latitude) * rad;
+    const dLon = (b.longitude - a.longitude) * rad;
+    const h = Math.sin(dLat / 2) ** 2 +
+      Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+  function distanceText(m) {
+    const feet = m * 3.28084;
+    if (feet < 1000) return `${Math.max(10, Math.round(feet / 10) * 10)} ft`;
+    return `${(m / 1609.344).toFixed(1)} mi`;
+  }
+  function walkText(m) {
+    const min = Math.max(1, Math.round(m / (PC.walkingSpeedMph * 1609.344 / 60)));
+    return `about ${min} min walk`;
+  }
+
+  // Picks a field whose name contains one of the hints, when none is configured.
+  function pickField(lyr, configured, hints) {
+    if (configured) return configured;
+    const f = (lyr.fields || []).find((f) =>
+      f.type === "string" && hints.some((h) => f.name.toLowerCase().includes(h)));
+    return f ? f.name : "";
+  }
+
+  function formatValue(lyr, fieldName, value) {
+    const field = (lyr.fields || []).find((f) => f.name === fieldName);
+    const domain = field && field.domain;
+    if (domain && domain.type === "coded-value") {
+      const cv = domain.codedValues.find((c) => c.code === value);
+      if (cv) return esc(cv.name);
+    }
+    if (field && (field.type === "date" || field.type === "date-only")) return esc(new Date(value).toLocaleDateString());
+    if (typeof value === "number") return esc(value.toLocaleString());
+    const s = str(value);
+    if (/^(https?:\/\/|www\.)/i.test(s)) {
+      const u = websiteUrl(s);
+      return `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(linkText(u))}</a>`;
+    }
+    return esc(s);
+  }
+
+  /* ---------- state ---------- */
+  const state = { q: "" };
+  let records = [], filtered = [], byId = new Map();
+  let rLayer = null, rView = null, pLayer = null, pView = null;
+  let lots = [];                       // all parking facilities
+  let pFields = { name: "", address: "", details: [] };
+  let rHighlight = null, pHighlight = null;
+  let selectedId = null, markedLot = null;
+
+  /* ---------- map ---------- */
+  const webMap = new WebMap({ portalItem: { id: CONFIG.webMapId, portal: { url: CONFIG.portalUrl } } });
+  const routeLayer = new GraphicsLayer({ title: "Restaurant to parking", listMode: "hide" });
+
+  const view = new MapView({
+    container: "map",
+    map: webMap,
+    center: CONFIG.center,
+    zoom: CONFIG.zoom,
+    constraints: { minZoom: 11 },
+    popupEnabled: false,
+    highlightOptions: { color: "#0f9a8e", haloOpacity: 0.95, fillOpacity: 0.25 }
+  });
+
+  /* ---------- map symbols in the list ---------- */
+  const swatchCache = new Map();
+  async function swatchFor(lyr, graphic) {
+    try {
+      const sym = await symbolUtils.getDisplayedSymbol(graphic, {
+        renderer: lyr.renderer, scale: view.scale, spatialReference: view.spatialReference
+      });
+      if (!sym) return "";
+      const key = JSON.stringify(sym.toJSON());
+      if (!swatchCache.has(key)) {
+        swatchCache.set(key, symbolUtils.renderPreviewHTML(sym, { size: 14 }).then((el) => {
+          const canvases = el.tagName === "CANVAS" ? [el] : [...el.querySelectorAll("canvas")];
+          canvases.forEach((c) => {
+            const img = document.createElement("img");
+            img.src = c.toDataURL();
+            img.width = c.clientWidth || c.width;
+            img.height = c.clientHeight || c.height;
+            if (c === el) el = img; else c.replaceWith(img);
+          });
+          el.setAttribute("aria-hidden", "true");
+          return el.outerHTML;
+        }).catch(() => ""));
+      }
+      return await swatchCache.get(key);
+    } catch (err) {
+      return "";
+    }
+  }
+  const swatchHtml = (s) => (s ? `<span class="sw">${s}</span>` : "");
+
+  /* ---------- layers ---------- */
+  function setLayerVisible(lyr) {
+    lyr.visible = true;
+    let p = lyr.parent;
+    while (p && p.type === "group") { p.visible = true; p = p.parent; }
+  }
+
+  async function featureLayers() {
+    const bm = webMap.basemap;
+    const base = new Set(bm ? bm.baseLayers.toArray().concat(bm.referenceLayers.toArray()) : []);
+    const all = webMap.allLayers.toArray().filter((l) => !base.has(l));
+    console.info("Layers in the web map:");
+    console.table(all.map((l) => ({ title: l.title, type: l.type, url: l.url || "" })));
+    const feats = all.filter((l) => l.type === "feature");
+    await Promise.all(feats.map((l) => l.load().catch(() => null)));
+    return feats.filter((l) => l.loaded);
+  }
+
+  function findRestaurantLayer(feats) {
+    const want = low(RC.layerTitle);
+    if (want) return feats.find((l) => low(l.title).includes(want)) || null;
+    return feats.find((l) => (l.fields || []).some((f) => f.name === RF.name)) || null;
+  }
+
+  function findParkingLayer(feats) {
+    const others = feats.filter((l) => l !== rLayer);
+    const want = low(PC.layerTitle);
+    if (want) return others.find((l) => low(l.title).includes(want)) || null;
+    return others.find((l) => low(l.title).includes("park")) ||
+      (others.length === 1 ? others[0] : null);
+  }
+
+  function logFields(lyr, label) {
+    console.info(`${label} layer "${lyr.title}" fields:`,
+      (lyr.fields || []).map((f) => `${f.name} (${f.alias})`).join(", "));
+  }
+
+  async function loadAll(lyr) {
+    const caps = lyr.capabilities && lyr.capabilities.query;
+    const paging = !!(caps && caps.supportsPagination);
+    const pageSize = (caps && caps.maxRecordCount) || 1000;
+    const all = [];
+    let start = 0;
+    while (true) {
+      const q = lyr.createQuery();
+      if (!q.where) q.where = "1=1";
+      q.outFields = ["*"];
+      q.returnGeometry = true;
+      q.outSpatialReference = view.spatialReference;
+      if (paging) { q.start = start; q.num = pageSize; }
+      const fs = await lyr.queryFeatures(q);
+      all.push(...fs.features);
+      if (!paging || !fs.exceededTransferLimit || fs.features.length === 0) break;
+      start += fs.features.length;
+    }
+    // Polygons (e.g. garage footprints) are measured from their center.
+    return all.filter((g) => g.geometry).map((g) => {
+      if (g.geometry.type === "polygon") g.geometry = g.geometry.centroid;
+      else if (g.geometry.type === "polyline") g.geometry = g.geometry.extent.center;
+      return g;
+    });
+  }
+
+  function prepare(lyr, where) {
+    if (where) lyr.definitionExpression = where;
+    lyr.outFields = ["*"];
+    lyr.popupEnabled = false;
+    setLayerVisible(lyr);
+  }
+
+  /* ---------- records ---------- */
+  function toRecord(g) {
+    const a = g.attributes;
+    const name = str(get(a, RF.name)) || "Name not listed";
+    const address = str(get(a, RF.address));
+    return {
+      id: String(a[rLayer.objectIdField]),
+      oid: a[rLayer.objectIdField],
+      graphic: g, geometry: g.geometry,
+      name, address,
+      website: websiteUrl(str(get(a, RF.website))),
+      phone: str(get(a, RF.phone)),
+      search: norm(name + " " + address),
+      swatch: "",
+      nearest: null
+    };
+  }
+
+  function toLot(g) {
+    const a = g.attributes;
+    return {
+      oid: a[pLayer.objectIdField],
+      graphic: g, geometry: g.geometry, attrs: a,
+      name: str(get(a, pFields.name)),
+      address: str(get(a, pFields.address)),
+      swatch: ""
+    };
+  }
+
+  // Configured detail rows, or every field with a value when none are set.
+  function lotDetailFields() {
+    if (PC.details && PC.details.length) return PC.details;
+    const skip = new Set([pLayer.objectIdField, pFields.name, pFields.address].filter(Boolean));
+    return (pLayer.fields || [])
+      .filter((f) => !skip.has(f.name) && !["oid", "global-id", "geometry", "blob", "raster"].includes(f.type) &&
+        !/^(shape|globalid|objectid|fid)/i.test(f.name) &&
+        !/^(created|last_edited)_(user|date)$/i.test(f.name))
+      .map((f) => ({ field: f.name, label: f.alias || f.name }));
+  }
+
+  function nearestLots(r) {
+    if (!r.nearest) {
+      r.nearest = lots
+        .map((l) => ({ lot: l, m: distanceMeters(r.geometry, l.geometry) }))
+        .filter((x) => isFinite(x.m))
+        .sort((a, b) => a.m - b.m)
+        .slice(0, Math.max(1, PC.count || 3));
+    }
+    return r.nearest;
+  }
+
+  /* ---------- filtering ---------- */
+  function apply() {
+    filtered = records.filter((r) => !state.q || r.search.includes(state.q))
+      .sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }) ||
+        a.address.localeCompare(b.address, "en", { numeric: true }));
+    const n = filtered.length, total = records.length;
+    const word = (k) => `${k} ${k === 1 ? "restaurant" : "restaurants"}`;
+    els.count.textContent = n === total ? word(total) : `${n} of ${word(total)}`;
+    renderList();
+    if (rView) {
+      rView.filter = n ? { objectIds: filtered.map((r) => r.oid) } : { where: "1=0" };
+    }
+  }
+
+  function resetFilters() {
+    state.q = "";
+    els.search.value = "";
+    apply();
+  }
+
+  /* ---------- cards ---------- */
+  const CHEV = `<svg class="chev" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+    <path fill="currentColor" d="M12 15.6 4.7 8.3l1.4-1.4 5.9 5.9 5.9-5.9 1.4 1.4z"/></svg>`;
+
+  function directionsUrl(lot) {
+    const dest = `${lot.geometry.latitude.toFixed(6)},${lot.geometry.longitude.toFixed(6)}`;
+    return `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
+  }
+
+  function lotHtml(x, i) {
+    const l = x.lot;
+    const rows = lotDetailFields()
+      .filter((d) => { const v = l.attrs[d.field]; return v !== null && v !== undefined && str(v) !== ""; })
+      .map((d) => `<dt>${esc(d.label)}</dt><dd>${formatValue(pLayer, d.field, l.attrs[d.field])}</dd>`)
+      .join("");
+    const name = l.name || l.address || "Parking facility";
+    const sub = [l.name && l.address ? l.address : "", walkText(x.m)].filter(Boolean).join(", ");
+    return `<li>
+      <details class="lot${l.oid === markedLot ? " here" : ""}" data-poid="${esc(l.oid)}" ${i === 0 ? "open" : ""}>
+        <summary>
+          <span class="p-name">${swatchHtml(l.swatch)}<span>${esc(name)}</span></span>
+          <span class="p-dist">${distanceText(x.m)}</span>
+          <span class="p-sub">${esc(sub)}</span>
+        </summary>
+        <div class="lot-body">
+          ${rows ? `<dl>${rows}</dl>` : ""}
+          <div class="lot-actions">
+            <a href="${esc(directionsUrl(l))}" target="_blank" rel="noopener">Driving directions</a>
+          </div>
+        </div>
+      </details>
+    </li>`;
+  }
+
+  function bodyHtml(r) {
+    const links = [];
+    if (r.website) links.push(`<a href="${esc(r.website)}" target="_blank" rel="noopener">${esc(linkText(r.website))}</a>`);
+    if (r.phone) links.push(`<a href="${esc(telHref(r.phone))}">${esc(r.phone)}</a>`);
+    const near = pLayer ? nearestLots(r) : [];
+    const parking = near.length
+      ? `<ol class="parking" aria-label="Closest parking to ${esc(r.name)}">${near.map(lotHtml).join("")}</ol>`
+      : `<p class="none">${pLayer ? "No parking facilities found." : "Parking information is unavailable right now."}</p>`;
+    return `${links.length ? `<div class="r-links">${links.join("")}</div>` : ""}
+      <h3>Closest parking</h3>${parking}`;
+  }
+
+  function cardHtml(r) {
+    const open = r.id === selectedId;
+    const bodyId = `body-${esc(r.id)}`;
+    return `<article class="card" data-id="${esc(r.id)}" aria-current="${open}">
+      <button type="button" class="card-head" aria-expanded="${open}" aria-controls="${bodyId}">
+        <span class="txt">
+          <span class="ttl">${esc(r.name)}</span>
+          <span class="sub"><span>${esc(r.address || "Address not listed")}</span></span>
+        </span>
+        ${CHEV}
+      </button>
+      <div class="card-body" id="${bodyId}" ${open ? "" : "hidden"}>${open ? bodyHtml(r) : ""}</div>
+    </article>`;
+  }
+
+  const cardEl = (id) => els.list.querySelector(`.card[data-id="${CSS.escape(String(id))}"]`);
+
+  function renderList() {
+    if (!filtered.length) {
+      els.list.innerHTML = `<li class="empty"><p>No restaurants match your search.</p>
+        <button type="button" class="link-btn" data-action="reset">Clear search</button></li>`;
+      return;
+    }
+    els.list.innerHTML = filtered.map((r) => `<li>${cardHtml(r)}</li>`).join("");
+  }
+
+  /* ---------- selection ---------- */
+  const moveOpts = () => ({ animate: !reduceMotion, duration: 600 });
+
+  function drawRoute(r, lot) {
+    routeLayer.removeAll();
+    if (!r || !lot) return;
+    const sr = view.spatialReference;
+    const a = r.geometry, b = lot.geometry;
+    routeLayer.add(new Graphic({
+      geometry: { type: "polyline", paths: [[[a.x, a.y], [b.x, b.y]]], spatialReference: sr },
+      symbol: { type: "simple-line", color: [11, 111, 102, 0.9], width: 2.5, style: "short-dash" }
+    }));
+  }
+
+  // Outlines one parking facility in the list and draws the line to it.
+  function markLot(r, oid, { zoom = true } = {}) {
+    markedLot = oid;
+    const lot = lots.find((l) => l.oid === oid);
+    const card = cardEl(r.id);
+    if (card) {
+      card.querySelectorAll(".lot").forEach((d) => {
+        const on = d.dataset.poid === String(oid);
+        d.classList.toggle("here", on);
+        if (on) d.open = true;
+      });
+    }
+    drawRoute(r, lot);
+    if (zoom && lot) {
+      view.goTo({ target: [r.geometry, lot.geometry] }, moveOpts())
+        .then(() => { if (view.zoom > 18) view.zoom = 18; })
+        .catch(() => {});
+    }
+  }
+
+  function select(id, { scroll = false } = {}) {
+    // Close the previous card
+    if (selectedId != null && selectedId !== id) {
+      const prev = cardEl(selectedId);
+      if (prev) {
+        prev.setAttribute("aria-current", "false");
+        prev.querySelector(".card-head").setAttribute("aria-expanded", "false");
+        const b = prev.querySelector(".card-body"); b.hidden = true; b.innerHTML = "";
+      }
+    }
+    if (rHighlight) { rHighlight.remove(); rHighlight = null; }
+    if (pHighlight) { pHighlight.remove(); pHighlight = null; }
+    routeLayer.removeAll();
+    markedLot = null;
+    selectedId = id;
+
+    const r = id != null ? byId.get(id) : null;
+    if (!r) return;
+
+    const near = pLayer ? nearestLots(r) : [];
+    if (near.length) markedLot = near[0].lot.oid;
+
+    const card = cardEl(id);
+    if (card) {
+      card.setAttribute("aria-current", "true");
+      card.querySelector(".card-head").setAttribute("aria-expanded", "true");
+      const body = card.querySelector(".card-body");
+      body.innerHTML = bodyHtml(r);
+      body.hidden = false;
+      if (scroll) card.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+    }
+
+    if (rView) rHighlight = rView.highlight(r.oid);
+    if (pView && near.length) pHighlight = pView.highlight(near.map((x) => x.lot.oid));
+
+    if (near.length) {
+      drawRoute(r, near[0].lot);
+      view.goTo({ target: [r.geometry].concat(near.map((x) => x.lot.geometry)) }, moveOpts())
+        .then(() => { if (view.zoom > 18) view.zoom = 18; })
+        .catch(() => {});
+    } else {
+      view.goTo({ target: r.geometry, zoom: Math.max(view.zoom, 17) }, moveOpts()).catch(() => {});
+    }
+  }
+
+  function deselect() {
+    if (selectedId == null) return;
+    select(null);
+    view.goTo({ center: CONFIG.center, zoom: CONFIG.zoom }, moveOpts()).catch(() => {});
+  }
+
+  /* ---------- events ---------- */
+  function debounce(fn, ms) {
+    let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  }
+
+  els.search.addEventListener("input", debounce(() => {
+    state.q = norm(els.search.value);
+    if (selectedId != null && !filtered.some((r) => r.id === selectedId)) select(null);
+    apply();
+  }, 200));
+
+  els.reset.addEventListener("click", resetFilters);
+
+  els.list.addEventListener("click", (e) => {
+    if (e.target.closest('[data-action="reset"]')) { resetFilters(); return; }
+
+    const showLot = e.target.closest("[data-show-lot]");
+    if (showLot) {
+      const r = byId.get(selectedId);
+      const lot = lots.find((l) => String(l.oid) === showLot.dataset.showLot);
+      if (r && lot) markLot(r, lot.oid);
+      return;
+    }
+
+    const head = e.target.closest(".card-head");
+    if (!head) return;
+    const id = head.closest(".card").dataset.id;
+    if (id === selectedId) deselect(); else select(id);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || selectedId == null) return;
+    const id = selectedId;
+    deselect();
+    const c = cardEl(id);
+    if (c) c.querySelector(".card-head").focus({ preventScroll: true });
+  });
+
+  // Clicking a restaurant on the map opens it in the list. Clicking one of the
+  // highlighted parking facilities points it out in the open card.
+  view.on("click", async (e) => {
+    const include = [rLayer, pLayer].filter(Boolean);
+    if (!include.length) return;
+    const res = await view.hitTest(e, { include });
+    const rHit = res.results.find((h) => h.graphic && h.graphic.layer === rLayer);
+    const pHit = res.results.find((h) => h.graphic && h.graphic.layer === pLayer);
+
+    if (rHit) {
+      const id = String(rHit.graphic.attributes[rLayer.objectIdField]);
+      if (!byId.has(id)) return;
+      if (id === selectedId) return;
+      select(id, { scroll: true });
+      const c = cardEl(id);
+      if (c) c.querySelector(".card-head").focus({ preventScroll: true });
+      return;
+    }
+    if (pHit && selectedId != null) {
+      const oid = pHit.graphic.attributes[pLayer.objectIdField];
+      const r = byId.get(selectedId);
+      if (r && nearestLots(r).some((x) => x.lot.oid === oid)) markLot(r, oid, { zoom: false });
+    }
+  });
+
+  view.on("pointer-move", debounce(async (e) => {
+    const include = [rLayer, pLayer].filter(Boolean);
+    if (!include.length) return;
+    const res = await view.hitTest(e, { include });
+    view.container.style.cursor = res.results.length ? "pointer" : "";
+  }, 30));
+
+  /* ---------- start ---------- */
+  (async function start() {
+    try {
+      await view.when();
+      const feats = await featureLayers();
+
+      rLayer = findRestaurantLayer(feats);
+      if (!rLayer) {
+        throw new Error(RC.layerTitle
+          ? `No feature layer in the web map has "${RC.layerTitle}" in its title.`
+          : `No feature layer in the web map has a "${RF.name}" field.`);
+      }
+      prepare(rLayer, RC.where);
+      logFields(rLayer, "Restaurant");
+
+      pLayer = findParkingLayer(feats);
+      if (pLayer) {
+        prepare(pLayer, PC.where);
+        logFields(pLayer, "Parking");
+        pFields.name = pickField(pLayer, PC.fields.name, ["name"]);
+        pFields.address = pickField(pLayer, PC.fields.address, ["addr", "location", "street"]);
+        console.info(`Parking name field: "${pFields.name}", address field: "${pFields.address}"`);
+      } else {
+        console.warn("No parking layer found. Set CONFIG.parking.layerTitle to part of its title.");
+      }
+
+      const [rFeatures, pFeatures] = await Promise.all([
+        loadAll(rLayer),
+        pLayer ? loadAll(pLayer) : Promise.resolve([])
+      ]);
+      records = rFeatures.map(toRecord);
+      byId = new Map(records.map((r) => [r.id, r]));
+      lots = pFeatures.map(toLot);
+      console.info(`Loaded ${records.length} restaurants and ${lots.length} parking facilities.`);
+
+      view.map.add(routeLayer);
+      rView = await view.whenLayerView(rLayer);
+      if (pLayer) pView = await view.whenLayerView(pLayer);
+
+      await Promise.all(records.map(async (r) => { r.swatch = await swatchFor(rLayer, r.graphic); }));
+      if (pLayer) await Promise.all(lots.map(async (l) => { l.swatch = await swatchFor(pLayer, l.graphic); }));
+
+      apply();
+    } catch (err) {
+      console.error(err);
+      console.warn("Restaurants failed to load. Check CONFIG.webMapId, the layer titles " +
+        "and the field names in CONFIG.");
+      els.count.textContent = "Restaurants unavailable";
+      els.list.innerHTML = `<li class="empty"><p>The restaurant list didn't load.</p>
+        <p>Refresh the page, or check back soon.</p></li>`;
+    }
+  })();
+});
+</script>
+</body>
+</html>
